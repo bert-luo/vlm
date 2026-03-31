@@ -75,8 +75,8 @@ else
 fi
 
 if [[ "${USE_LORA}" -eq 1 ]]; then
-  BASE_MODEL="$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['base_model_name_or_path'])" "${ADAPTER}/adapter_config.json")"
-  LORA_RANK="$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['r'])" "${ADAPTER}/adapter_config.json")"
+  BASE_MODEL="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['base_model_name_or_path'])" "${ADAPTER}/adapter_config.json")"
+  LORA_RANK="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['r'])" "${ADAPTER}/adapter_config.json")"
 else
   BASE_MODEL="${MODEL_INPUT}"
 fi
