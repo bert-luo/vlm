@@ -20,6 +20,8 @@ import os
 import shutil
 import subprocess
 import sys
+import textwrap
+from datetime import datetime
 from pathlib import Path
 
 import anthropic
@@ -67,6 +69,8 @@ BLENDER_SCRIPT_HEADER = """\
 
 
 def strip_fences(code: str) -> str:
+    import re
+    code = re.sub(r"<think>.*?</think>", "", code, flags=re.DOTALL).strip()
     if code.startswith("```"):
         lines = code.splitlines()
         code = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
@@ -97,12 +101,50 @@ def _call_openai_compat(messages: list, model: str, client: openai.OpenAI) -> st
     return response.choices[0].message.content
 
 
+def _log_response(raw: str, code: str, model: str, prompt: str, attempt: int,
+                   log_dir: Path | None, error: SyntaxError | None = None) -> None:
+    """Print a summary and optionally save the full response to disk."""
+    lines = code.splitlines()
+    n_lines = len(lines)
+    n_chars = len(code)
+    status = "SYNTAX OK" if error is None else f"SYNTAX ERROR: {error}"
+
+    print(f"[generate] --- attempt {attempt} response ({n_lines} lines, {n_chars} chars) ---")
+    preview_lines = 20
+    for i, line in enumerate(lines[:preview_lines]):
+        print(f"[generate]   {i+1:>4}| {line}")
+    if n_lines > preview_lines:
+        print(f"[generate]   ... ({n_lines - preview_lines} more lines) ...")
+        for line in lines[-5:]:
+            print(f"[generate]        | {line}")
+    print(f"[generate] --- {status} ---")
+
+    if log_dir is not None:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        slug = prompt[:40].lower().replace(" ", "_").replace("/", "-")
+        safe_model = model.replace("/", "_")
+        fname = f"{slug}__{safe_model}__attempt{attempt}.py"
+        log_path = log_dir / fname
+        header = textwrap.dedent(f"""\
+            # Model: {model}
+            # Prompt: {prompt}
+            # Attempt: {attempt}
+            # Status: {status}
+            # Timestamp: {datetime.now().isoformat()}
+            # Lines: {n_lines} | Chars: {n_chars}
+            # {'=' * 60}
+        """)
+        log_path.write_text(header + code)
+        print(f"[generate] Raw response saved to {log_path}")
+
+
 def call_llm(
     prompt: str,
     client: anthropic.Anthropic | openai.OpenAI,
     model: str,
     max_retries: int = 2,
     extra_context: str | None = None,
+    log_dir: Path | None = None,
 ) -> str:
     user_content = f"Scene description: {prompt}"
     if extra_context:
@@ -119,8 +161,10 @@ def call_llm(
 
         try:
             ast.parse(code)
+            _log_response(raw, code, model, prompt, attempt, log_dir)
             return code
         except SyntaxError as e:
+            _log_response(raw, code, model, prompt, attempt, log_dir, error=e)
             print(f"[generate] Syntax error on attempt {attempt}: {e}")
             if attempt < max_retries:
                 messages.append({"role": "assistant", "content": raw})
@@ -265,7 +309,8 @@ def simple_mode(args: argparse.Namespace) -> None:
         model = args.model or "claude-sonnet-4-6"
         client = anthropic.Anthropic(api_key=api_key)
 
-    code = call_llm(args.prompt, client, model)
+    log_dir = Path(args.log_dir) if args.log_dir else HERE / "logs"
+    code = call_llm(args.prompt, client, model, log_dir=log_dir)
     scripts_dir = Path(args.scripts_dir) if args.scripts_dir else HERE / "scripts"
     script_path = save_script(code, args.prompt, scripts_dir)
     print("[generate] Syntax OK.")
@@ -309,6 +354,7 @@ def simple_mode(args: argparse.Namespace) -> None:
                     f"The previous script failed at runtime with this Blender error:\n{error_summary}\n"
                     "Fix the issue and output the complete corrected script."
                 ),
+                log_dir=log_dir,
             )
             script_path = save_script(fix_code, args.prompt + "_fix", scripts_dir)
             print(f"[generate] Fixed script saved to {script_path}")
@@ -343,6 +389,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Model name. Defaults to claude-sonnet-4-6 (Anthropic). "
         "With --endpoint, auto-detected from /models if omitted.",
+    )
+    parser.add_argument(
+        "--log-dir",
+        default=None,
+        help="Directory to save raw LLM responses for each attempt. "
+        f"Default: {HERE / 'logs'}",
     )
     parser.add_argument(
         "--simple",

@@ -16,8 +16,18 @@
 #   ./eval/serve_lora_generate.sh Qwen/Qwen3-0.6B "high school study room"
 #   ./eval/serve_lora_generate.sh Qwen/Qwen3-0.6B -- --output /tmp/out.png
 #
+# Port assignment:
+#   By default the port is auto-derived from CUDA_VISIBLE_DEVICES so parallel
+#   runs on different GPUs never collide:  port = 8000 + first_gpu_id
+#   Override with VLLM_PORT if needed.
+#
+# Reasoning:
+#   Qwen3/3.5 models emit <think>...</think> reasoning tokens.  vLLM's
+#   --enable-reasoning --reasoning-parser qwen3 flags separate these from the
+#   actual content so generate.py only sees the code in .message.content.
+#
 # Environment:
-#   VLLM_PORT       (default 8000)
+#   VLLM_PORT       (default: auto from CUDA_VISIBLE_DEVICES, fallback 8000)
 #   VLLM_HOST       bind address (default 127.0.0.1)
 #   LORA_API_NAME   name used in OpenAI "model" field (default lora; LoRA mode only)
 #   EXTRA_VLLM_ARGS extra CLI args passed to vLLM (quoted string)
@@ -37,7 +47,15 @@ usage() {
 MODEL_INPUT="$1"
 shift || true
 
-VLLM_PORT="${VLLM_PORT:-8000}"
+# Auto-derive port from CUDA_VISIBLE_DEVICES to avoid collisions in parallel runs.
+if [[ -z "${VLLM_PORT:-}" ]]; then
+  _first_gpu="${CUDA_VISIBLE_DEVICES%%,*}"
+  if [[ "${_first_gpu}" =~ ^[0-9]+$ ]]; then
+    VLLM_PORT=$(( 8000 + _first_gpu ))
+  else
+    VLLM_PORT=8000
+  fi
+fi
 VLLM_HOST="${VLLM_HOST:-127.0.0.1}"
 LORA_API_NAME="${LORA_API_NAME:-lora}"
 
@@ -109,7 +127,8 @@ VLLM_CMD=(uv run vllm serve "${BASE_MODEL}")
 set -- "${VLLM_CMD[@]}" \
   --host "${VLLM_HOST}" \
   --port "${VLLM_PORT}" \
-  --enforce-eager
+  --enforce-eager \
+  --reasoning-parser qwen3
 
 if [[ "${USE_LORA}" -eq 1 ]]; then
   set -- "$@" \
@@ -148,8 +167,32 @@ else
   GEN_MODEL="${BASE_MODEL}"
 fi
 
+LOG_DIR="${REPO_ROOT}/eval/logs"
+
 echo "[serve_lora_generate] Running generate.py with prompt: ${PROMPT}"
+echo "[serve_lora_generate] Logs will be saved to: ${LOG_DIR}"
+GEN_EXIT=0
 uv run python generate.py "${PROMPT}" \
   --endpoint "${ENDPOINT}" \
   --model "${GEN_MODEL}" \
-  "${GEN_EXTRA[@]}"
+  --log-dir "${LOG_DIR}" \
+  "${GEN_EXTRA[@]}" || GEN_EXIT=$?
+
+echo ""
+echo "============================================================"
+echo "[serve_lora_generate] SUMMARY"
+echo "  Model:    ${GEN_MODEL}"
+if [[ "${USE_LORA}" -eq 1 ]]; then
+  echo "  LoRA:     ${ADAPTER}"
+fi
+echo "  Prompt:   ${PROMPT}"
+echo "  Exit:     ${GEN_EXIT}"
+echo "  Logs:     ${LOG_DIR}"
+if ls "${LOG_DIR}"/*.py >/dev/null 2>&1; then
+  echo "  Saved responses:"
+  for f in "${LOG_DIR}"/*.py; do
+    echo "    - $(basename "$f")"
+  done
+fi
+echo "============================================================"
+exit "${GEN_EXIT}"
