@@ -1,0 +1,12 @@
+[project]
+name = "vlm-eval"
+version = "0.1.0"
+description = "vLLM-based evaluation / inference for VLM project"
+requires-python = ">=3.10, <3.14"
+dependencies = [
+    "vllm>=0.18.0",
+    "python-dotenv>=1.2.2",
+]
+
+[tool.uv]
+index-strategy = "unsafe-best-match"

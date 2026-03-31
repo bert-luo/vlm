@@ -1,0 +1,24 @@
+[project]
+name = "vlm"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.10, <3.14"
+dependencies = [
+    "pillow>=12.1.1",
+    "transformers>=5.4.0",
+    "peft>=0.11.0",
+    "accelerate>=0.30.0",
+    "datasets>=2.19.0",
+    "bitsandbytes>=0.43.0",
+    "anthropic>=0.86.0",
+    "python-dotenv>=1.2.2",
+    "openai>=1.99.0",
+    "torch>=2.10.0,<2.11",
+    "torchvision>=0.25.0",
+]
+
+[tool.uv]
+index-strategy = "unsafe-best-match"
+
+[[tool.uv.index]]
+url = "https://download.pytorch.org/whl/cu128"
